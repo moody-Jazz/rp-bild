@@ -3,6 +3,7 @@ import os
 import sys
 import shutil
 import stat
+from sys import argv
 
 platform_name   = ''
 primary_lang    = ''
@@ -13,12 +14,16 @@ linker_flags    = ['-lraylib', '-Llib']
 compiler_flags  = ['-Wall', '-Og', '-std={}17', '-Iinclude']
 
 root_dir            = os.getcwd()
-raylib_dir          = "/raylib/"
+raylib_dir          = "raylib"
 build_raylib_cmd    = ['make', 'PLATFORM=PLATFORM_DESKTOP']
 static_raylib_name  = "libraylib.a"
 raylib_header_name  = "raylib.h"
-example_dir         = "examples/core/"
-example_name        = "core_basic_window.c"
+example_dir         = os.path.join(raylib_dir, 'examples', 'core')
+example_name        = 'core_basic_window.c'
+
+# =================================================================================================
+#                          Helper functions 
+# =================================================================================================
 
 def rmtree(top):
     for root, dirs, files in os.walk(top, topdown=False):
@@ -38,13 +43,23 @@ def generate_execution_cmd(compiler_name, compiler_flags, other_flags, linker_fl
     res.extend(linker_flags)
     return res
 
+# =================================================================================================
+#                          get the values related to system 
+# =================================================================================================
 
 def config_env():
     global primary_lang, compiler_name, compiler_list, extension
     global platform_name, raylib_dir, linker_flags, compiler_flags
 
     # Figure out the primary language
-    src_list = os.listdir(f'{root_dir}/src')
+    try:
+        src_list = os.listdir(os.path.join(root_dir, 'src'))
+    except:
+        print("couldn't find the src directory, initialize the project first")
+        exit(1)
+    if len(src_list) <= 0:
+        print("Error: couldn't find main")
+        exit(1)
     for src in src_list:
         if 'main' in src:
             primary_lang = src.split('.')[1]
@@ -97,6 +112,9 @@ def config_env():
         print("no c/c++ compiler found, download one of the below", compiler_list)
         exit(1)
 
+# =================================================================================================
+#                    clone and build raylib and create the project structure
+# =================================================================================================
 
 def init_project():
     global primary_lang, compiler_name, compiler_flags, linker_flags, root_dir
@@ -108,22 +126,21 @@ def init_project():
         primary_lang = input('> ').lower()
         if primary_lang not in allowed_langs:
             print('unexpected input either enter C or CPP')
-    print(f'{compiler_name} found on your system')
 
     clone_repo = ['git', 'clone', "https://github.com/raysan5/raylib"]
     subprocess.run(clone_repo)
+    raylib_src = os.path.join(raylib_dir, 'src')
 
-    os.chdir(os.getcwd() + raylib_dir + 'src/')
+    os.chdir(raylib_src)
     print('building static library libraylib...........')
     subprocess.run(build_raylib_cmd)
-    raylib_src = raylib_dir + 'src/'
 
-    staticlib_src       = raylib_src + static_raylib_name
-    staticlib_dest      = "lib/"
-    raylibheader_src    = raylib_src + raylib_header_name
-    raylibheader_dest   = "include/"
-    example_src         = raylib_dir + example_dir + example_name
-    example_dest        = 'src/main.{}'.format(primary_lang)
+    staticlib_src       = os.path.join(raylib_src, static_raylib_name)
+    staticlib_dest      = 'lib'
+    raylibheader_src    = os.path.join(raylib_src, raylib_header_name)
+    raylibheader_dest   = 'include'
+    example_src         = os.path.join(example_dir, example_name)
+    example_dest        = os.path.join('src', 'main.{}'.format(primary_lang))
     
     os.chdir(root_dir)
     print('copying the header file and static library................')
@@ -142,9 +159,11 @@ def init_project():
     rmtree('raylib')
 
     config_env()
+    print(f'{compiler_name} found on your system')
 
     cmd = generate_execution_cmd(
-        compiler_name, compiler_flags, ['-o', 'main', 'src/main.{}'.format(primary_lang)], linker_flags
+        compiler_name, compiler_flags, 
+        ['-o', 'main', os.path.join('src', f'main.{primary_lang}')], linker_flags
         )
 
     print('Compiling the src', ' '.join(cmd), sep='\n')
@@ -161,3 +180,86 @@ def init_project():
         subprocess.run(['main'], check=True)
     except:
         print("couldn't run the executable")
+
+# =================================================================================================
+#            compile/recompile all the files which are not-compiled/modified
+# =================================================================================================
+
+def compile():
+    config_env()
+    global root_dir, compiler_name, compiler_flags, linker_flags
+    root_dir_list = os.listdir()
+
+    if 'obj' not in root_dir_list:
+        print('obj direcotry not found')
+        print('creating obj.........')
+        os.makedirs(name='obj')
+    
+    src_dir_list = os.listdir(f'{root_dir}/src') 
+    src_list, obj_list = [], []
+
+    for src in src_dir_list:
+        obj = src.split('.')[0] + '.o'
+        # add files for recompilation if either its .o doesn't exist or is older than the file itself
+        if (
+            not os.path.exists(os.path.join('obj', obj)) or 
+            os.path.getmtime(os.path.join('src', src)) > os.path.getmtime(os.path.join('obj', obj))
+        ):
+            obj_list.append(os.path.join('obj', obj))
+            src_list.append(os.path.join('src', src))
+        
+        other_flags = ['-c']
+        other_flags.extend(src_list)
+        other_flags.append('-o')
+        other_flags.extend(obj_list)
+        cmd = generate_execution_cmd(compiler_name, compiler_flags, other_flags, [])
+        
+    if len(src_list) >= 1:
+        try:
+            print('compiling with the command', ' '.join(cmd), sep='\n')
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            print("GCC compilation failed!")
+    else:
+        print('Nothing to recompile, try compiling after modification')
+        exit(1)
+
+    obj_list = [os.path.join('obj', x) for x in os.listdir('obj')]
+    obj_list.extend(['-o', 'main'])
+    cmd = generate_execution_cmd(compiler_name, compiler_flags, obj_list, linker_flags)
+
+    try:
+        print('Trying to create executable with command', ' '.join(cmd), sep='\n')
+        subprocess.run(cmd, check=True)
+        print('compilation succesful')
+    except subprocess.CalledProcessError as e:
+        print('Failed to create executable')
+
+# =================================================================================================
+#                        Dlete all the obj files and directory 
+# =================================================================================================
+
+def clean():
+    print('this action will delete all the obj file and obj directory')
+    choice = input('y/n: ')
+    if choice == 'y':
+        print('deleting obj directory........')
+        rmtree('obj')
+    
+# =================================================================================================
+#               main function to take cl-arguments and call appropriate functions
+# =================================================================================================
+
+def main():
+    args = argv[1:]
+    
+    if len(args) <= 0 or args[0] == 'compile':
+        compile()
+    elif len(args) > 0 and args[0] == 'init':
+        init_project()
+    elif len(args) > 0 and args[0] == 'clean':
+        clean()
+
+if __name__ == "__main__":
+    main()
+    
