@@ -52,20 +52,19 @@ def config_env():
     global platform_name, raylib_dir, linker_flags, compiler_flags
 
     # Figure out the primary language
+    src_list = []
     try:
         src_list = os.listdir(os.path.join(root_dir, 'src'))
     except:
         print("couldn't find the src directory, initialize the project first")
         exit(1)
-    if len(src_list) <= 0:
-        print("Error: couldn't find main")
+
+    main_candidates = [src for src in src_list if src.startswith('main.')]
+    if not main_candidates:
+        print("Error: couldn't find main.c or main.cpp in src/")
         exit(1)
-    for src in src_list:
-        if 'main' in src:
-            primary_lang = src.split('.')[1]
-        else:
-            print("Error: couldn't find main")
-            exit(1)
+    src = main_candidates[0]
+    primary_lang = src.split('.')[1]
 
     # Figure out the operating system
     if sys.platform == 'darwin':
@@ -112,6 +111,7 @@ def config_env():
         print("no c/c++ compiler found, download one of the below", compiler_list)
         exit(1)
 
+
 # =================================================================================================
 #                    clone and build raylib and create the project structure
 # =================================================================================================
@@ -133,7 +133,8 @@ def init_project():
 
     os.chdir(raylib_src)
     print('building static library libraylib...........')
-    subprocess.run(build_raylib_cmd)
+    print(build_raylib_cmd)
+    subprocess.run(' '.join(build_raylib_cmd))
 
     staticlib_src       = os.path.join(raylib_src, static_raylib_name)
     staticlib_dest      = 'lib'
@@ -197,34 +198,34 @@ def compile():
     
     src_dir_list = os.listdir(f'{root_dir}/src') 
     src_list, obj_list = [], []
-
+   
     for src in src_dir_list:
         obj = src.split('.')[0] + '.o'
+        obj_list.append(os.path.join('obj', obj))
         # add files for recompilation if either its .o doesn't exist or is older than the file itself
         if (
             not os.path.exists(os.path.join('obj', obj)) or 
             os.path.getmtime(os.path.join('src', src)) > os.path.getmtime(os.path.join('obj', obj))
         ):
-            obj_list.append(os.path.join('obj', obj))
             src_list.append(os.path.join('src', src))
         
-        other_flags = ['-c']
-        other_flags.extend(src_list)
-        other_flags.append('-o')
-        other_flags.extend(obj_list)
-        cmd = generate_execution_cmd(compiler_name, compiler_flags, other_flags, [])
+            other_flags = ['-c']
+            other_flags.append(os.path.join('src', src))
+            other_flags.append('-o')
+            other_flags.append(os.path.join('obj', obj))
+            cmd = generate_execution_cmd(compiler_name, compiler_flags, other_flags, [])
+     
+            try:
+                print('compiling with the command', ' '.join(cmd), sep='\n')
+                subprocess.run(cmd, check=True)
+            except subprocess.CalledProcessError as e:
+                print("GCC compilation failed!")
         
-    if len(src_list) >= 1:
-        try:
-            print('compiling with the command', ' '.join(cmd), sep='\n')
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            print("GCC compilation failed!")
-    else:
+    if len(src_list) < 1:
         print('Nothing to recompile, try compiling after modification')
         exit(1)
 
-    obj_list = [os.path.join('obj', x) for x in os.listdir('obj')]
+    # link and generate the executable file
     obj_list.extend(['-o', 'main'])
     cmd = generate_execution_cmd(compiler_name, compiler_flags, obj_list, linker_flags)
 
